@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Java / Maven build output
+target/
+
+# Logs
+logs/
+*.log
+
+# Local environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# IDE and OS files
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

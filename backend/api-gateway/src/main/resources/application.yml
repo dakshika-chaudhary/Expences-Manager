@@ -1,0 +1,46 @@
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3000"
+              - "http://127.0.0.1:3000"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+      routes:
+        - id: auth-service
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/auth/**
+        - id: expense-service
+          uri: lb://EXPENSE-SERVICE
+          predicates:
+            - Path=/expenses/**,/categories/**
+        - id: budget-service
+          uri: lb://BUDGET-SERVICE
+          predicates:
+            - Path=/budgets/**
+        - id: notification-service
+          uri: lb://NOTIFICATION-SERVICE
+          predicates:
+            - Path=/notifications/**
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}

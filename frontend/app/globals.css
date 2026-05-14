@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #0b1020;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.theme-dark {
+  --page: #0b1020;
+  --surface: #111827;
+  --panel: #151d2f;
+  --card: #101827;
+  --soft: #1d273a;
+  --input: #0f172a;
+  --track: #263248;
+  --line: #2d3a52;
+  --text: #f8fafc;
+  --muted: #9aa7bd;
+}
+
+.theme-light {
+  --page: #f5f7fb;
+  --surface: #ffffff;
+  --panel: #ffffff;
+  --card: #f9fbff;
+  --soft: #edf2f7;
+  --input: #ffffff;
+  --track: #d9e2ec;
+  --line: #d6deea;
+  --text: #172033;
+  --muted: #61708a;
+}

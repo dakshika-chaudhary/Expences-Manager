@@ -1,0 +1,42 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: ${AUTH_DB_URL:${DB_URL:jdbc:postgresql://localhost:5433/ExpenseManager}}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+  jpa:
+    show-sql: true
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+
+app:
+  email:
+    enabled: ${APP_EMAIL_ENABLED:true}
+  jwt:
+    secret: ${JWT_SECRET:change-this-secret-to-at-least-32-characters}
+    access-token-minutes: 30
