@@ -69,6 +69,10 @@ const initialExpenses: Expense[] = [];
 const initialGoals: SavingsGoal[] = [];
 const initialBills: RecurringBill[] = [];
 
+function categoriesWithSavingsLimit(limit: number) {
+  return initialCategories.map((category) => (category.name === 'Savings' ? { ...category, limit } : category));
+}
+
 const websiteServices = [
   {
     name: 'Daily expense tracking',
@@ -157,11 +161,24 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
   const [billDueDay, setBillDueDay] = useState(1);
   const [billAutopay, setBillAutopay] = useState(false);
 
+  function resetFinancialWorkspace() {
+    setSalary(0);
+    setSavingsTarget(0);
+    setCategories(initialCategories);
+    setExpenses(initialExpenses);
+    setGoals(initialGoals);
+    setBills(initialBills);
+    setExpenseCategory(initialCategories[0].name);
+    setBillCategory(initialCategories[0].name);
+  }
+
   useEffect(() => {
     const saved = localStorage.getItem('expensesManagerState');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        const savedSessionExpiresAt = Number(parsed.sessionExpiresAt ?? 0);
+        const savedAuthenticated = Boolean(parsed.authenticated) && savedSessionExpiresAt > Date.now();
         setEmail(parsed.email ?? '');
         setLoginEmail(parsed.email ?? '');
         setRegisterName(parsed.registerName ?? '');
@@ -171,16 +188,19 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
         setRegisterSavings(Number(parsed.savingsTarget ?? 0));
         setRegisterCity(parsed.registerCity ?? '');
         setRegisterGoal(parsed.registerGoal ?? 'Build emergency fund');
-        setSalary(Number(parsed.salary ?? 0));
-        setSavingsTarget(Number(parsed.savingsTarget ?? 0));
-        setCategories(Array.isArray(parsed.categories) ? parsed.categories : initialCategories);
-        setExpenses(Array.isArray(parsed.expenses) ? parsed.expenses : initialExpenses);
-        setGoals(Array.isArray(parsed.goals) ? parsed.goals : initialGoals);
-        setBills(Array.isArray(parsed.bills) ? parsed.bills : initialBills);
+        if (savedAuthenticated) {
+          setSalary(Number(parsed.salary ?? 0));
+          setSavingsTarget(Number(parsed.savingsTarget ?? 0));
+          setCategories(Array.isArray(parsed.categories) ? parsed.categories : initialCategories);
+          setExpenses(Array.isArray(parsed.expenses) ? parsed.expenses : initialExpenses);
+          setGoals(Array.isArray(parsed.goals) ? parsed.goals : initialGoals);
+          setBills(Array.isArray(parsed.bills) ? parsed.bills : initialBills);
+        } else {
+          resetFinancialWorkspace();
+        }
         setRegistered(Boolean(parsed.registered));
-        const savedSessionExpiresAt = Number(parsed.sessionExpiresAt ?? 0);
         setSessionExpiresAt(savedSessionExpiresAt);
-        setAuthenticated(Boolean(parsed.authenticated) && savedSessionExpiresAt > Date.now());
+        setAuthenticated(savedAuthenticated);
       } catch {
         localStorage.removeItem('expensesManagerState');
       }
@@ -203,12 +223,12 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
         registerPhone,
         registerCity,
         registerGoal,
-        salary,
-        savingsTarget,
-        categories,
-        expenses,
-        goals,
-        bills,
+        salary: authenticated ? salary : 0,
+        savingsTarget: authenticated ? savingsTarget : 0,
+        categories: authenticated ? categories : initialCategories,
+        expenses: authenticated ? expenses : initialExpenses,
+        goals: authenticated ? goals : initialGoals,
+        bills: authenticated ? bills : initialBills,
       }),
     );
   }, [authenticated, bills, categories, email, expenses, goals, ready, registered, registerCity, registerGoal, registerName, registerPhone, salary, savingsTarget, sessionExpiresAt]);
@@ -324,6 +344,12 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
       localStorage.removeItem('jwtTokenExpiresAt');
     }
     setEmail(loginEmail);
+    setSalary(registerIncome);
+    setSavingsTarget(registerSavings);
+    setCategories(categoriesWithSavingsLimit(registerSavings));
+    setExpenses(initialExpenses);
+    setGoals(initialGoals);
+    setBills(initialBills);
     setLoginMessage(loginRemember ? 'Logged in. JWT session is remembered for 7 days.' : 'Logged in for this visit.');
   }
 
@@ -335,11 +361,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     }
     setEmail(registerEmail);
     setLoginEmail(registerEmail);
-    setSalary(registerIncome);
-    setSavingsTarget(registerSavings);
-    setCategories((current) =>
-      current.map((category) => (category.name === 'Savings' ? { ...category, limit: registerSavings } : category)),
-    );
+    resetFinancialWorkspace();
     setRegistered(true);
     setAuthenticated(false);
     setSessionExpiresAt(0);
@@ -353,6 +375,11 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     setAuthenticated(false);
     setSessionExpiresAt(0);
     setLoginPassword('');
+    resetFinancialWorkspace();
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('jwtToken');
+    localStorage.removeItem('jwtTokenExpiresAt');
     setLoginMessage('Logged out. Login again to start a new session.');
   }
 
