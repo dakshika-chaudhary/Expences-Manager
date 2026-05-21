@@ -4,6 +4,21 @@ server:
 spring:
   application:
     name: notification-service
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+app:
+  email:
+    enabled: ${APP_EMAIL_ENABLED:true}
 
 eureka:
   client:

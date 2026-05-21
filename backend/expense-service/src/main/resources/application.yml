@@ -19,3 +19,7 @@ eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+
+app:
+  notification-service:
+    url: ${NOTIFICATION_SERVICE_URL:http://localhost:8084}

@@ -23,4 +23,14 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
                                      @Param("category") String category,
                                      @Param("from") LocalDate from,
                                      @Param("to") LocalDate to);
+
+    @Query("""
+            select coalesce(sum(e.amount), 0)
+            from Expense e
+            where e.userId = :userId
+              and e.expenseDate between :from and :to
+            """)
+    BigDecimal sumForUserBetween(@Param("userId") Long userId,
+                                 @Param("from") LocalDate from,
+                                 @Param("to") LocalDate to);
 }
