@@ -2,57 +2,55 @@ package com.expenses.auth.service;
 
 import com.expenses.auth.dto.AuthResponse;
 import com.expenses.auth.entity.AppUser;
-import com.expenses.auth.entity.OtpVerification;
 import com.expenses.auth.entity.RefreshToken;
 import com.expenses.auth.repository.AppUserRepository;
-import com.expenses.auth.repository.OtpVerificationRepository;
 import com.expenses.auth.repository.RefreshTokenRepository;
 import com.expenses.auth.security.JwtService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Service
 public class AuthService {
     private final AppUserRepository userRepository;
-    private final OtpVerificationRepository otpRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtService jwtService;
     private final OtpEmailService otpEmailService;
+    private final StringRedisTemplate redisTemplate;
     private final SecureRandom random = new SecureRandom();
     private final long accessTokenMinutes;
+    private final Duration otpTtl;
 
     public AuthService(
             AppUserRepository userRepository,
-            OtpVerificationRepository otpRepository,
             RefreshTokenRepository refreshTokenRepository,
             JwtService jwtService,
             OtpEmailService otpEmailService,
-            @Value("${app.jwt.access-token-minutes:30}") long accessTokenMinutes
+            StringRedisTemplate redisTemplate,
+            @Value("${app.jwt.access-token-minutes:30}") long accessTokenMinutes,
+            @Value("${app.otp.ttl-minutes:5}") long otpTtlMinutes
     ) {
         this.userRepository = userRepository;
-        this.otpRepository = otpRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtService = jwtService;
         this.otpEmailService = otpEmailService;
+        this.redisTemplate = redisTemplate;
         this.accessTokenMinutes = accessTokenMinutes;
+        this.otpTtl = Duration.ofMinutes(otpTtlMinutes);
     }
 
-    @Transactional
     public void sendOtp(String email) {
         String normalizedEmail = email.trim().toLowerCase();
         String otp = String.format("%06d", random.nextInt(1_000_000));
 
-        OtpVerification verification = new OtpVerification();
-        verification.setEmail(normalizedEmail);
-        verification.setOtp(otp);
-        verification.setExpiresAt(Instant.now().plus(10, ChronoUnit.MINUTES));
-        otpRepository.save(verification);
+        redisTemplate.opsForValue().set(otpKey(normalizedEmail), otp, otpTtl);
 
         otpEmailService.sendOtp(normalizedEmail, otp);
     }
@@ -60,15 +58,18 @@ public class AuthService {
     @Transactional
     public AuthResponse verifyOtp(String email, String otp) {
         String normalizedEmail = email.trim().toLowerCase();
-        OtpVerification verification = otpRepository
-                .findTopByEmailAndOtpAndUsedFalseOrderByIdDesc(normalizedEmail, otp)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid OTP"));
+        String key = otpKey(normalizedEmail);
+        String storedOtp = redisTemplate.opsForValue().get(key);
 
-        if (verification.getExpiresAt().isBefore(Instant.now())) {
-            throw new IllegalArgumentException("OTP expired");
+        if (storedOtp == null) {
+            throw new IllegalArgumentException("OTP expired or not requested");
+        }
+        if (!storedOtp.equals(otp.trim())) {
+            throw new IllegalArgumentException("Invalid OTP");
         }
 
-        verification.setUsed(true);
+        redisTemplate.delete(key);
+
         AppUser user = userRepository.findByEmail(normalizedEmail).orElseGet(() -> {
             AppUser created = new AppUser();
             created.setEmail(normalizedEmail);
@@ -101,5 +102,9 @@ public class AuthService {
         refreshTokenRepository.save(refreshToken);
 
         return new AuthResponse(user.getId(), user.getEmail(), accessToken, refreshToken.getToken(), accessTokenMinutes);
+    }
+
+    private String otpKey(String normalizedEmail) {
+        return "expenses-manager:otp:" + normalizedEmail;
     }
 }

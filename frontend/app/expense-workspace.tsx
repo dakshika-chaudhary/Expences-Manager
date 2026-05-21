@@ -129,12 +129,18 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
   const [authBusy, setAuthBusy] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginOtpSent, setLoginOtpSent] = useState(false);
+  const [loginOtp, setLoginOtp] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
   const [loginRemember, setLoginRemember] = useState(true);
-  const [loginMessage, setLoginMessage] = useState('Use your registered email and password to access the dashboard.');
+  const [loginMessage, setLoginMessage] = useState('Enter your registered email to receive a login OTP.');
   const [registerName, setRegisterName] = useState('');
   const [registerPhone, setRegisterPhone] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
+  const [registerOtpSent, setRegisterOtpSent] = useState(false);
+  const [registerOtp, setRegisterOtp] = useState('');
+  const [registerBusy, setRegisterBusy] = useState(false);
   const [registerIncome, setRegisterIncome] = useState(0);
   const [registerSavings, setRegisterSavings] = useState(0);
   const [registerCity, setRegisterCity] = useState('');
@@ -314,22 +320,96 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     ...(savingsTarget > 0 && totals.projectedSavings < savingsTarget ? [`Savings target is short by ${formatMoney(totals.savingsShortfall)}`] : []),
   ];
   const topCategories = [...totals.categoryTotals].sort((a, b) => b.spent - a.spent).slice(0, 5);
+  const currentMonth = new Date().toISOString().slice(0, 7);
+
+  async function requestOtpForEmail(address: string) {
+    const normalizedEmail = address.trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new Error('Email is required');
+    }
+
+    const response = await fetch(`${apiBaseUrl}/auth/send-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normalizedEmail }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Auth service returned ${response.status}`);
+    }
+  }
+
+  async function verifyOtpForEmail(address: string, code: string) {
+    const normalizedEmail = address.trim().toLowerCase();
+    if (!normalizedEmail || !code.trim()) {
+      throw new Error('Email and OTP are required');
+    }
+
+    const response = await fetch(`${apiBaseUrl}/auth/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normalizedEmail, otp: code.trim() }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Auth service returned ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  function storeAuthTokens(tokens: { userId: number; email?: string; accessToken: string; refreshToken: string }, address: string, remember: boolean) {
+    localStorage.setItem('accessToken', tokens.accessToken);
+    localStorage.setItem('refreshToken', tokens.refreshToken);
+    localStorage.removeItem('jwtToken');
+    localStorage.removeItem('jwtTokenExpiresAt');
+    setUserId(tokens.userId);
+    setEmail(tokens.email ?? address.trim().toLowerCase());
+    setAuthenticated(true);
+    setRegistered(true);
+    setSessionExpiresAt(remember ? Date.now() + sevenDaysMs : Date.now() + 24 * 60 * 60 * 1000);
+  }
+
+  async function syncBackendBudgetProfile(nextUserId = userId, nextSalary = salary, nextSavingsTarget = savingsTarget, nextCategories = categories) {
+    if (!nextUserId) {
+      return;
+    }
+
+    await fetch(`${apiBaseUrl}/budgets/salary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: nextUserId,
+        month: currentMonth,
+        salary: nextSalary,
+        savingsTarget: nextSavingsTarget,
+      }),
+    });
+
+    await Promise.all(
+      nextCategories
+        .filter((category) => category.limit > 0)
+        .map((category) =>
+          fetch(`${apiBaseUrl}/budgets/allocations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: nextUserId,
+              month: currentMonth,
+              category: category.name,
+              limitAmount: category.limit,
+            }),
+          }),
+        ),
+    );
+  }
 
   async function sendOtp(event: FormEvent) {
     event.preventDefault();
     setAuthBusy(true);
     setAuthMessage('Sending OTP...');
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/send-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Auth service returned ${response.status}`);
-      }
-
+      await requestOtpForEmail(email);
       setOtpSent(true);
       setAuthMessage('OTP sent. Check your inbox and enter the code.');
     } catch {
@@ -344,21 +424,8 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     setAuthBusy(true);
     setAuthMessage('Verifying OTP...');
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Auth service returned ${response.status}`);
-      }
-
-      const tokens = await response.json();
-      localStorage.setItem('accessToken', tokens.accessToken);
-      localStorage.setItem('refreshToken', tokens.refreshToken);
-      setUserId(tokens.userId);
-      setAuthenticated(true);
+      const tokens = await verifyOtpForEmail(email, otp);
+      storeAuthTokens(tokens, email, true);
       setAuthMessage('Verified. JWT and refresh token are saved in browser storage.');
     } catch {
       setAuthMessage('OTP verification failed. Check the code and backend service.');
@@ -367,53 +434,76 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     }
   }
 
-  function loginUser(event: FormEvent) {
+  async function loginUser(event: FormEvent) {
     event.preventDefault();
-    if (!registered) {
-      setLoginMessage('Register an account before logging in.');
+    if (!loginEmail) {
+      setLoginMessage('Enter your registered email.');
       return;
     }
-    if (!loginEmail || !loginPassword) {
-      setLoginMessage('Enter both email and password.');
-      return;
+    setLoginBusy(true);
+    try {
+      if (!loginOtpSent) {
+        await requestOtpForEmail(loginEmail);
+        setLoginOtpSent(true);
+        setLoginMessage('Login OTP sent. Check your inbox and enter the code.');
+        return;
+      }
+
+      const tokens = await verifyOtpForEmail(loginEmail, loginOtp);
+      storeAuthTokens(tokens, loginEmail, loginRemember);
+      setSalary(registerIncome);
+      setSavingsTarget(registerSavings);
+      setCategories(categoriesWithSavingsLimit(registerSavings));
+      setExpenses(initialExpenses);
+      setGoals(initialGoals);
+      setBills(initialBills);
+      await syncBackendBudgetProfile(tokens.userId, registerIncome, registerSavings, categoriesWithSavingsLimit(registerSavings));
+      setLoginOtp('');
+      setLoginOtpSent(false);
+      setLoginMessage(loginRemember ? 'OTP verified. Session is remembered for 7 days.' : 'OTP verified for this visit.');
+    } catch {
+      setLoginMessage(loginOtpSent ? 'OTP verification failed. Check the code and backend service.' : 'Could not send OTP. Start auth service and configure SMTP.');
+    } finally {
+      setLoginBusy(false);
     }
-    setAuthenticated(true);
-    setUserId(null);
-    setSessionExpiresAt(loginRemember ? Date.now() + sevenDaysMs : 0);
-    if (loginRemember) {
-      localStorage.setItem('jwtToken', `demo-jwt-${Date.now()}`);
-      localStorage.setItem('jwtTokenExpiresAt', String(Date.now() + sevenDaysMs));
-    } else {
-      localStorage.removeItem('jwtToken');
-      localStorage.removeItem('jwtTokenExpiresAt');
-    }
-    setEmail(loginEmail);
-    setSalary(registerIncome);
-    setSavingsTarget(registerSavings);
-    setCategories(categoriesWithSavingsLimit(registerSavings));
-    setExpenses(initialExpenses);
-    setGoals(initialGoals);
-    setBills(initialBills);
-    setLoginMessage(loginRemember ? 'Logged in. JWT session is remembered for 7 days.' : 'Logged in for this visit.');
   }
 
-  function registerUser(event: FormEvent) {
+  async function registerUser(event: FormEvent) {
     event.preventDefault();
     if (!registerName || !registerPhone || !registerEmail || !registerPassword || registerIncome <= 0 || registerSavings < 0) {
       setRegisterMessage('Name, phone number, email, password, monthly income, and savings target are required.');
       return;
     }
-    setEmail(registerEmail);
-    setLoginEmail(registerEmail);
-    resetFinancialWorkspace();
-    setRegistered(true);
-    setAuthenticated(false);
-    setUserId(null);
-    setSessionExpiresAt(0);
-    localStorage.removeItem('jwtToken');
-    localStorage.removeItem('jwtTokenExpiresAt');
-    setLoginPassword('');
-    setRegisterMessage('Registration complete. Please login to start your 7-day JWT session.');
+    setRegisterBusy(true);
+    try {
+      if (!registerOtpSent) {
+        await requestOtpForEmail(registerEmail);
+        setRegisterOtpSent(true);
+        setRegisterMessage('Registration OTP sent. Check your inbox and enter the code.');
+        return;
+      }
+
+      const tokens = await verifyOtpForEmail(registerEmail, registerOtp);
+      const profileCategories = categoriesWithSavingsLimit(registerSavings);
+      setEmail(registerEmail.trim().toLowerCase());
+      setLoginEmail(registerEmail.trim().toLowerCase());
+      setSalary(registerIncome);
+      setSavingsTarget(registerSavings);
+      setCategories(profileCategories);
+      setExpenses(initialExpenses);
+      setGoals(initialGoals);
+      setBills(initialBills);
+      storeAuthTokens(tokens, registerEmail, true);
+      await syncBackendBudgetProfile(tokens.userId, registerIncome, registerSavings, profileCategories);
+      setLoginPassword('');
+      setRegisterOtp('');
+      setRegisterOtpSent(false);
+      setRegisterMessage('OTP verified. Registration is complete and budget email alerts are enabled for this profile.');
+    } catch {
+      setRegisterMessage(registerOtpSent ? 'OTP verification failed. Check the code and backend service.' : 'Could not send registration OTP. Start auth service and configure SMTP.');
+    } finally {
+      setRegisterBusy(false);
+    }
   }
 
   function logoutUser() {
@@ -442,9 +532,11 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
   }
 
   function updateLimit(categoryName: string, limit: number) {
-    setCategories((current) =>
-      current.map((category) => (category.name === categoryName ? { ...category, limit } : category)),
-    );
+    const nextCategories = categories.map((category) => (category.name === categoryName ? { ...category, limit } : category));
+    setCategories(nextCategories);
+    void syncBackendBudgetProfile(userId, salary, savingsTarget, nextCategories).catch(() => {
+      setExpenseNotice('Budget changed locally, but backend alert limits could not be updated.');
+    });
   }
 
   async function addExpense(event: FormEvent) {
@@ -460,6 +552,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     );
     if (userId) {
       try {
+        await syncBackendBudgetProfile();
         await fetch(`${apiBaseUrl}/expenses`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -581,7 +674,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
             <nav className="flex gap-2 overflow-x-auto">
               {navItems.filter((item) => {
                 if (!registered) {
-                  return item.key !== 'login';
+                  return true;
                 }
                 return item.key !== 'register' && item.key !== 'login';
               }).map((item) => {
@@ -708,11 +801,15 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
                 <LoginForm
                   email={loginEmail}
                   password={loginPassword}
+                  otp={loginOtp}
+                  otpSent={loginOtpSent}
+                  busy={loginBusy}
                   remember={loginRemember}
                   message={loginMessage}
                   authenticated={authenticated}
                   onEmail={setLoginEmail}
                   onPassword={setLoginPassword}
+                  onOtp={setLoginOtp}
                   onRemember={setLoginRemember}
                   onSubmit={loginUser}
                 />
@@ -731,6 +828,9 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
                   phone={registerPhone}
                   email={registerEmail}
                   password={registerPassword}
+                  otp={registerOtp}
+                  otpSent={registerOtpSent}
+                  busy={registerBusy}
                   income={registerIncome}
                   savings={registerSavings}
                   city={registerCity}
@@ -740,6 +840,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
                   onPhone={setRegisterPhone}
                   onEmail={setRegisterEmail}
                   onPassword={setRegisterPassword}
+                  onOtp={setRegisterOtp}
                   onIncome={setRegisterIncome}
                   onSavings={setRegisterSavings}
                   onCity={setRegisterCity}
@@ -1033,11 +1134,15 @@ function AuthForm(props: {
 function LoginForm(props: {
   email: string;
   password: string;
+  otp: string;
+  otpSent: boolean;
+  busy: boolean;
   remember: boolean;
   message: string;
   authenticated: boolean;
   onEmail: (value: string) => void;
   onPassword: (value: string) => void;
+  onOtp: (value: string) => void;
   onRemember: (value: boolean) => void;
   onSubmit: (event: FormEvent) => void;
 }) {
@@ -1046,13 +1151,14 @@ function LoginForm(props: {
       <StatusPill active={props.authenticated} activeText="Logged in" idleText="Signed out" />
       <TextField label="Email" value={props.email} onChange={props.onEmail} placeholder="you@example.com" />
       <TextField label="Password" type="password" value={props.password} onChange={props.onPassword} placeholder="Enter password" />
+      {props.otpSent && <TextField label="Login OTP" value={props.otp} onChange={props.onOtp} placeholder="Enter email OTP" />}
       <label className="flex items-center gap-3 rounded-md bg-[var(--soft)] p-3 text-sm">
         <input type="checkbox" checked={props.remember} onChange={(event) => props.onRemember(event.target.checked)} className="h-4 w-4 accent-cyan-500" />
         Remember this browser for 7 days
       </label>
       <p className="rounded-md bg-[var(--soft)] p-3 text-sm text-[var(--muted)]">{props.message}</p>
-      <button className="h-11 w-full rounded-md bg-cyan-600 px-4 text-sm font-semibold text-white transition hover:bg-cyan-500">
-        Login
+      <button disabled={props.busy} className="h-11 w-full rounded-md bg-cyan-600 px-4 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60">
+        {props.busy ? 'Please wait' : props.otpSent ? 'Verify login OTP' : 'Send login OTP'}
       </button>
       <Link href="/register" className="block text-center text-sm font-medium text-cyan-400">
         Create a new account
@@ -1066,6 +1172,9 @@ function RegisterForm(props: {
   phone: string;
   email: string;
   password: string;
+  otp: string;
+  otpSent: boolean;
+  busy: boolean;
   income: number;
   savings: number;
   city: string;
@@ -1075,6 +1184,7 @@ function RegisterForm(props: {
   onPhone: (value: string) => void;
   onEmail: (value: string) => void;
   onPassword: (value: string) => void;
+  onOtp: (value: string) => void;
   onIncome: (value: number) => void;
   onSavings: (value: number) => void;
   onCity: (value: string) => void;
@@ -1087,6 +1197,7 @@ function RegisterForm(props: {
       <TextField label="Phone number" value={props.phone} onChange={props.onPhone} placeholder="+91 98765 43210" />
       <TextField label="Email" value={props.email} onChange={props.onEmail} placeholder="you@example.com" />
       <TextField label="Password" type="password" value={props.password} onChange={props.onPassword} placeholder="Create password" />
+      {props.otpSent && <TextField label="Registration OTP" value={props.otp} onChange={props.onOtp} placeholder="Enter email OTP" />}
       <NumberField label="Monthly income" value={props.income} onChange={props.onIncome} />
       <NumberField label="Monthly savings target" value={props.savings} onChange={props.onSavings} />
       <TextField label="City" value={props.city} onChange={props.onCity} placeholder="Bengaluru, Delhi, Mumbai" />
@@ -1101,8 +1212,8 @@ function RegisterForm(props: {
         </select>
       </label>
       <p className="rounded-md bg-[var(--soft)] p-3 text-sm text-[var(--muted)] md:col-span-2">{props.message}</p>
-      <button className="h-11 rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-500 md:col-span-2">
-        Register account
+      <button disabled={props.busy} className="h-11 rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 md:col-span-2">
+        {props.busy ? 'Please wait' : props.otpSent ? 'Verify OTP and register' : 'Send registration OTP'}
       </button>
     </form>
   );
