@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 
-type PageKey = 'dashboard' | 'auth' | 'login' | 'register' | 'expenses' | 'budgets' | 'insights' | 'services';
+type PageKey = 'dashboard' | 'auth' | 'login' | 'register' | 'expenses' | 'budgets' | 'goals' | 'bills' | 'insights' | 'services';
 
 type Category = {
   name: string;
@@ -22,6 +22,23 @@ type Expense = {
   merchant: string;
 };
 
+type SavingsGoal = {
+  id: number;
+  name: string;
+  target: number;
+  saved: number;
+  deadline: string;
+};
+
+type RecurringBill = {
+  id: number;
+  name: string;
+  amount: number;
+  category: string;
+  dueDay: number;
+  autopay: boolean;
+};
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8080';
 const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
@@ -30,6 +47,8 @@ const navItems: { key: PageKey; href: string; label: string; icon: string }[] = 
   { key: 'services', href: '/services', label: 'Services', icon: 'S' },
   { key: 'expenses', href: '/expenses', label: 'Expenses', icon: 'E' },
   { key: 'budgets', href: '/budgets', label: 'Budgets', icon: 'B' },
+  { key: 'goals', href: '/goals', label: 'Goals', icon: 'G' },
+  { key: 'bills', href: '/bills', label: 'Bills', icon: 'P' },
   { key: 'insights', href: '/insights', label: 'Insights', icon: 'I' },
   { key: 'login', href: '/login', label: 'Login', icon: 'L' },
   { key: 'register', href: '/register', label: 'Register', icon: 'R' },
@@ -47,6 +66,8 @@ const initialCategories: Category[] = [
 ];
 
 const initialExpenses: Expense[] = [];
+const initialGoals: SavingsGoal[] = [];
+const initialBills: RecurringBill[] = [];
 
 const websiteServices = [
   {
@@ -118,12 +139,23 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
   const [savingsTarget, setSavingsTarget] = useState(0);
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [expenses, setExpenses] = useState<Expense[]>(initialExpenses);
+  const [goals, setGoals] = useState<SavingsGoal[]>(initialGoals);
+  const [bills, setBills] = useState<RecurringBill[]>(initialBills);
   const [newCategory, setNewCategory] = useState('');
   const [newCategoryLimit, setNewCategoryLimit] = useState(2500);
   const [expenseCategory, setExpenseCategory] = useState(initialCategories[0].name);
   const [expenseAmount, setExpenseAmount] = useState(0);
   const [expenseDescription, setExpenseDescription] = useState('');
   const [expenseMerchant, setExpenseMerchant] = useState('');
+  const [goalName, setGoalName] = useState('');
+  const [goalTarget, setGoalTarget] = useState(0);
+  const [goalSaved, setGoalSaved] = useState(0);
+  const [goalDeadline, setGoalDeadline] = useState('');
+  const [billName, setBillName] = useState('');
+  const [billAmount, setBillAmount] = useState(0);
+  const [billCategory, setBillCategory] = useState(initialCategories[0].name);
+  const [billDueDay, setBillDueDay] = useState(1);
+  const [billAutopay, setBillAutopay] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('expensesManagerState');
@@ -143,6 +175,8 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
         setSavingsTarget(Number(parsed.savingsTarget ?? 0));
         setCategories(Array.isArray(parsed.categories) ? parsed.categories : initialCategories);
         setExpenses(Array.isArray(parsed.expenses) ? parsed.expenses : initialExpenses);
+        setGoals(Array.isArray(parsed.goals) ? parsed.goals : initialGoals);
+        setBills(Array.isArray(parsed.bills) ? parsed.bills : initialBills);
         setRegistered(Boolean(parsed.registered));
         const savedSessionExpiresAt = Number(parsed.sessionExpiresAt ?? 0);
         setSessionExpiresAt(savedSessionExpiresAt);
@@ -173,9 +207,11 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
         savingsTarget,
         categories,
         expenses,
+        goals,
+        bills,
       }),
     );
-  }, [authenticated, categories, email, expenses, ready, registered, registerCity, registerGoal, registerName, registerPhone, salary, savingsTarget, sessionExpiresAt]);
+  }, [authenticated, bills, categories, email, expenses, goals, ready, registered, registerCity, registerGoal, registerName, registerPhone, salary, savingsTarget, sessionExpiresAt]);
 
   const totals = useMemo(() => {
     const categoryTotals = categories.map((category) => {
@@ -194,18 +230,25 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
 
     const totalSpent = expenses.reduce((total, expense) => total + expense.amount, 0);
     const planned = categories.reduce((total, category) => total + category.limit, 0);
+    const monthlyBills = bills.reduce((total, bill) => total + bill.amount, 0);
+    const totalGoalTarget = goals.reduce((total, goal) => total + goal.target, 0);
+    const totalGoalSaved = goals.reduce((total, goal) => total + goal.saved, 0);
     const projectedSavings = salary - totalSpent;
 
     return {
       categoryTotals,
       totalSpent,
       planned,
+      monthlyBills,
+      totalGoalTarget,
+      totalGoalSaved,
       remainingSalary: salary - totalSpent,
       projectedSavings,
       savingsPercent: savingsTarget > 0 ? Math.max(0, Math.min((projectedSavings / savingsTarget) * 100, 100)) : 0,
+      goalPercent: totalGoalTarget > 0 ? Math.min((totalGoalSaved / totalGoalTarget) * 100, 100) : 0,
       exceededCount: categoryTotals.filter((category) => category.exceeded).length,
     };
-  }, [categories, expenses, salary, savingsTarget]);
+  }, [bills, categories, expenses, goals, salary, savingsTarget]);
 
   const topAlerts = totals.categoryTotals.filter((category) => category.exceeded);
   const topCategories = [...totals.categoryTotals].sort((a, b) => b.spent - a.spent).slice(0, 5);
@@ -352,6 +395,72 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     setExpenseMerchant('');
   }
 
+  function addGoal(event: FormEvent) {
+    event.preventDefault();
+    if (!goalName.trim() || goalTarget <= 0) {
+      return;
+    }
+    setGoals((current) => [
+      ...current,
+      {
+        id: Date.now(),
+        name: goalName.trim(),
+        target: goalTarget,
+        saved: Math.max(goalSaved, 0),
+        deadline: goalDeadline || 'No deadline',
+      },
+    ]);
+    setGoalName('');
+    setGoalTarget(0);
+    setGoalSaved(0);
+    setGoalDeadline('');
+  }
+
+  function addGoalMoney(goalId: number, amount: number) {
+    if (amount <= 0) {
+      return;
+    }
+    setGoals((current) =>
+      current.map((goal) => (goal.id === goalId ? { ...goal, saved: Math.min(goal.saved + amount, goal.target) } : goal)),
+    );
+  }
+
+  function addBill(event: FormEvent) {
+    event.preventDefault();
+    if (!billName.trim() || billAmount <= 0) {
+      return;
+    }
+    setBills((current) => [
+      ...current,
+      {
+        id: Date.now(),
+        name: billName.trim(),
+        amount: billAmount,
+        category: billCategory,
+        dueDay: Math.max(1, Math.min(billDueDay, 31)),
+        autopay: billAutopay,
+      },
+    ]);
+    setBillName('');
+    setBillAmount(0);
+    setBillDueDay(1);
+    setBillAutopay(false);
+  }
+
+  function payBill(bill: RecurringBill) {
+    setExpenses((current) => [
+      {
+        id: Date.now(),
+        category: bill.category,
+        amount: bill.amount,
+        description: `${bill.name} payment`,
+        merchant: 'Recurring bill',
+        date: new Date().toISOString().slice(0, 10),
+      },
+      ...current,
+    ]);
+  }
+
   return (
     <main className={darkMode ? 'theme-dark min-h-screen' : 'theme-light min-h-screen'}>
       <div className="min-h-screen bg-[var(--page)] text-[var(--text)] transition-colors duration-300">
@@ -462,12 +571,15 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
             <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
               <div className="space-y-5">
                 <AlertStrip alerts={topAlerts.map((item) => item.name)} />
+                <FinancialPulse salary={salary} totals={totals} bills={bills} goals={goals} />
                 <Panel title="Spending by category">
                   <CategoryGrid categories={totals.categoryTotals} />
                 </Panel>
               </div>
               <div className="space-y-5">
                 <SalaryPanel salary={salary} savingsTarget={savingsTarget} totals={totals} onSalary={setSalary} onSavings={setSavingsTarget} />
+                <MiniGoals goals={goals} />
+                <MiniBills bills={bills} onPay={payBill} />
                 <RecentExpenses expenses={expenses} />
               </div>
             </div>
@@ -585,13 +697,58 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
             </div>
           )}
 
+          {page === 'goals' && (
+            <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
+              <Panel title="Create savings goal">
+                <GoalForm
+                  name={goalName}
+                  target={goalTarget}
+                  saved={goalSaved}
+                  deadline={goalDeadline}
+                  onName={setGoalName}
+                  onTarget={setGoalTarget}
+                  onSaved={setGoalSaved}
+                  onDeadline={setGoalDeadline}
+                  onSubmit={addGoal}
+                />
+              </Panel>
+              <Panel title="Goal progress">
+                <GoalBoard goals={goals} onAddMoney={addGoalMoney} />
+              </Panel>
+            </div>
+          )}
+
+          {page === 'bills' && (
+            <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
+              <Panel title="Add recurring bill">
+                <BillForm
+                  categories={categories}
+                  name={billName}
+                  amount={billAmount}
+                  category={billCategory}
+                  dueDay={billDueDay}
+                  autopay={billAutopay}
+                  onName={setBillName}
+                  onAmount={setBillAmount}
+                  onCategory={setBillCategory}
+                  onDueDay={setBillDueDay}
+                  onAutopay={setBillAutopay}
+                  onSubmit={addBill}
+                />
+              </Panel>
+              <Panel title="Upcoming bills">
+                <BillBoard bills={bills} onPay={payBill} />
+              </Panel>
+            </div>
+          )}
+
           {page === 'insights' && (
             <div className="grid gap-5 lg:grid-cols-[1fr_380px]">
               <Panel title="Monthly distribution">
                 <InsightBars categories={topCategories} total={totals.totalSpent} />
               </Panel>
               <Panel title="Cashflow forecast">
-                <Forecast salary={salary} totalSpent={totals.totalSpent} planned={totals.planned} />
+                <Forecast salary={salary} totalSpent={totals.totalSpent} planned={totals.planned} monthlyBills={totals.monthlyBills} goalTarget={totals.totalGoalTarget} goalSaved={totals.totalGoalSaved} />
               </Panel>
             </div>
           )}
@@ -652,6 +809,16 @@ function pageTitle(page: PageKey) {
       eyebrow: 'Budget service',
       title: 'Salary and category planning',
       description: 'Tune budget limits, add custom categories, and watch savings projections change instantly.',
+    },
+    goals: {
+      eyebrow: 'Savings planner',
+      title: 'Goals and progress tracking',
+      description: 'Create financial goals, add saved money, and monitor progress from the dashboard.',
+    },
+    bills: {
+      eyebrow: 'Recurring payments',
+      title: 'Bill calendar and autopay planning',
+      description: 'Track rent, subscriptions, EMI, utilities, and convert bill payments into expenses.',
     },
     insights: {
       eyebrow: 'Analytics layer',
@@ -912,6 +1079,70 @@ function CategoryForm(props: { name: string; limit: number; onName: (value: stri
   );
 }
 
+function GoalForm(props: {
+  name: string;
+  target: number;
+  saved: number;
+  deadline: string;
+  onName: (value: string) => void;
+  onTarget: (value: number) => void;
+  onSaved: (value: number) => void;
+  onDeadline: (value: string) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <form onSubmit={props.onSubmit} className="space-y-3">
+      <TextField label="Goal name" value={props.name} onChange={props.onName} placeholder="Emergency fund, laptop, trip" />
+      <NumberField label="Target amount" value={props.target} onChange={props.onTarget} />
+      <NumberField label="Already saved" value={props.saved} onChange={props.onSaved} />
+      <TextField label="Deadline" type="date" value={props.deadline} onChange={props.onDeadline} />
+      <button className="h-11 w-full rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-500">
+        Add goal
+      </button>
+    </form>
+  );
+}
+
+function BillForm(props: {
+  categories: Category[];
+  name: string;
+  amount: number;
+  category: string;
+  dueDay: number;
+  autopay: boolean;
+  onName: (value: string) => void;
+  onAmount: (value: number) => void;
+  onCategory: (value: string) => void;
+  onDueDay: (value: number) => void;
+  onAutopay: (value: boolean) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <form onSubmit={props.onSubmit} className="space-y-3">
+      <TextField label="Bill name" value={props.name} onChange={props.onName} placeholder="Rent, Netflix, EMI" />
+      <NumberField label="Amount" value={props.amount} onChange={props.onAmount} />
+      <label className="block text-sm font-medium">
+        Category
+        <select value={props.category} onChange={(event) => props.onCategory(event.target.value)} className="mt-2 h-11 w-full rounded-md border border-[var(--line)] bg-[var(--input)] px-3 outline-none">
+          {props.categories.map((category) => (
+            <option key={category.name} value={category.name}>
+              {category.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <NumberField label="Due day of month" value={props.dueDay} onChange={props.onDueDay} />
+      <label className="flex items-center gap-3 rounded-md bg-[var(--soft)] p-3 text-sm">
+        <input type="checkbox" checked={props.autopay} onChange={(event) => props.onAutopay(event.target.checked)} className="h-4 w-4 accent-cyan-500" />
+        Mark as autopay
+      </label>
+      <button className="h-11 w-full rounded-md bg-cyan-600 px-4 text-sm font-semibold text-white transition hover:bg-cyan-500">
+        Add bill
+      </button>
+    </form>
+  );
+}
+
 function SalaryPanel(props: {
   salary: number;
   savingsTarget: number;
@@ -934,6 +1165,147 @@ function SalaryPanel(props: {
           </div>
           <p className="mt-3 text-sm text-[var(--muted)]">Remaining salary: {formatMoney(props.totals.remainingSalary)}</p>
         </div>
+      </div>
+    </Panel>
+  );
+}
+
+function FinancialPulse({
+  salary,
+  totals,
+  bills,
+  goals,
+}: {
+  salary: number;
+  totals: { monthlyBills: number; totalGoalSaved: number; totalGoalTarget: number; goalPercent: number; projectedSavings: number };
+  bills: RecurringBill[];
+  goals: SavingsGoal[];
+}) {
+  const runway = totals.monthlyBills > 0 ? Math.floor(Math.max(salary - totals.projectedSavings, 0) / totals.monthlyBills) : 0;
+  return (
+    <div className="grid gap-3 md:grid-cols-3">
+      <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4">
+        <p className="text-sm text-[var(--muted)]">Recurring bills</p>
+        <p className="mt-2 text-2xl font-semibold">{formatMoney(totals.monthlyBills)}</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">{bills.length} active bill plans</p>
+      </div>
+      <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4">
+        <p className="text-sm text-[var(--muted)]">Goal progress</p>
+        <p className="mt-2 text-2xl font-semibold">{Math.round(totals.goalPercent)}%</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">{goals.length} savings goals</p>
+      </div>
+      <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4">
+        <p className="text-sm text-[var(--muted)]">Bill runway</p>
+        <p className="mt-2 text-2xl font-semibold">{runway}</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">months covered by current spend pattern</p>
+      </div>
+    </div>
+  );
+}
+
+function GoalBoard({ goals, onAddMoney }: { goals: SavingsGoal[]; onAddMoney: (goalId: number, amount: number) => void }) {
+  if (goals.length === 0) {
+    return <EmptyState title="No goals yet" text="Create a goal for emergency funds, travel, gadgets, education, or any planned purchase." />;
+  }
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {goals.map((goal) => {
+        const percent = goal.target > 0 ? Math.min((goal.saved / goal.target) * 100, 100) : 0;
+        const remaining = Math.max(goal.target - goal.saved, 0);
+        return (
+          <div key={goal.id} className="rounded-lg border border-[var(--line)] bg-[var(--card)] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold">{goal.name}</p>
+                <p className="mt-1 text-sm text-[var(--muted)]">Deadline: {goal.deadline}</p>
+              </div>
+              <span className="rounded-md bg-emerald-500/15 px-2 py-1 text-xs text-emerald-400">{Math.round(percent)}%</span>
+            </div>
+            <div className="mt-4 h-3 rounded-full bg-[var(--track)]">
+              <div className="h-3 rounded-full bg-emerald-500" style={{ width: `${percent}%` }} />
+            </div>
+            <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
+              <Metric label="Saved" value={formatMoney(goal.saved)} />
+              <Metric label="Target" value={formatMoney(goal.target)} />
+              <Metric label="Left" value={formatMoney(remaining)} />
+            </div>
+            <div className="mt-4 flex gap-2">
+              {[500, 1000, 5000].map((amount) => (
+                <button key={amount} onClick={() => onAddMoney(goal.id, amount)} className="h-9 rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 text-xs font-medium">
+                  +{formatMoney(amount)}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BillBoard({ bills, onPay }: { bills: RecurringBill[]; onPay: (bill: RecurringBill) => void }) {
+  if (bills.length === 0) {
+    return <EmptyState title="No bills yet" text="Add recurring bills to track rent, EMI, subscriptions, fees, and utilities." />;
+  }
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {[...bills].sort((a, b) => a.dueDay - b.dueDay).map((bill) => (
+        <div key={bill.id} className="rounded-lg border border-[var(--line)] bg-[var(--card)] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold">{bill.name}</p>
+              <p className="mt-1 text-sm text-[var(--muted)]">{bill.category} - due day {bill.dueDay}</p>
+            </div>
+            <span className={`rounded-md px-2 py-1 text-xs ${bill.autopay ? 'bg-cyan-500/15 text-cyan-400' : 'bg-amber-500/15 text-amber-400'}`}>
+              {bill.autopay ? 'Autopay' : 'Manual'}
+            </span>
+          </div>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <p className="text-xl font-semibold">{formatMoney(bill.amount)}</p>
+            <button onClick={() => onPay(bill)} className="h-10 rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white">
+              Mark paid
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MiniGoals({ goals }: { goals: SavingsGoal[] }) {
+  const firstGoal = goals[0];
+  if (!firstGoal) {
+    return null;
+  }
+  const percent = firstGoal.target > 0 ? Math.min((firstGoal.saved / firstGoal.target) * 100, 100) : 0;
+  return (
+    <Panel title="Top goal">
+      <p className="font-semibold">{firstGoal.name}</p>
+      <div className="mt-3 h-2 rounded-full bg-[var(--track)]">
+        <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${percent}%` }} />
+      </div>
+      <p className="mt-3 text-sm text-[var(--muted)]">{formatMoney(firstGoal.saved)} saved of {formatMoney(firstGoal.target)}</p>
+    </Panel>
+  );
+}
+
+function MiniBills({ bills, onPay }: { bills: RecurringBill[]; onPay: (bill: RecurringBill) => void }) {
+  const nextBill = [...bills].sort((a, b) => a.dueDay - b.dueDay)[0];
+  if (!nextBill) {
+    return null;
+  }
+  return (
+    <Panel title="Next bill">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="font-semibold">{nextBill.name}</p>
+          <p className="mt-1 text-sm text-[var(--muted)]">Due day {nextBill.dueDay} - {formatMoney(nextBill.amount)}</p>
+        </div>
+        <button onClick={() => onPay(nextBill)} className="h-10 rounded-md bg-cyan-600 px-3 text-sm font-semibold text-white">
+          Pay
+        </button>
       </div>
     </Panel>
   );
@@ -1016,18 +1388,30 @@ function InsightBars({ categories, total }: { categories: Array<Category & { spe
   );
 }
 
-function Forecast({ salary, totalSpent, planned }: { salary: number; totalSpent: number; planned: number }) {
+function Forecast({ salary, totalSpent, planned, monthlyBills, goalTarget, goalSaved }: { salary: number; totalSpent: number; planned: number; monthlyBills: number; goalTarget: number; goalSaved: number }) {
   const remainingPlan = Math.max(planned - totalSpent, 0);
-  const finalBalance = salary - totalSpent - remainingPlan;
+  const goalGap = Math.max(goalTarget - goalSaved, 0);
+  const finalBalance = salary - totalSpent - remainingPlan - monthlyBills;
   return (
     <div className="space-y-4">
       <Metric label="Salary" value={formatMoney(salary)} />
       <Metric label="Spent already" value={formatMoney(totalSpent)} />
       <Metric label="Remaining planned budget" value={formatMoney(remainingPlan)} />
+      <Metric label="Recurring bills" value={formatMoney(monthlyBills)} />
+      <Metric label="Goal gap" value={formatMoney(goalGap)} />
       <Metric label="Forecast balance" value={formatMoney(finalBalance)} />
       <div className={`rounded-md p-3 text-sm ${finalBalance >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
         {finalBalance >= 0 ? 'Current plan is cash-positive.' : 'Current plan is over salary. Reduce category limits or increase income.'}
       </div>
+    </div>
+  );
+}
+
+function EmptyState({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-[var(--line)] bg-[var(--card)] p-6 text-center">
+      <p className="font-semibold">{title}</p>
+      <p className="mt-2 text-sm text-[var(--muted)]">{text}</p>
     </div>
   );
 }
@@ -1111,6 +1495,8 @@ function SiteFooter() {
             <Link href="/services">Services</Link>
             <Link href="/expenses">Expenses</Link>
             <Link href="/budgets">Budgets</Link>
+            <Link href="/goals">Goals</Link>
+            <Link href="/bills">Bills</Link>
             <Link href="/insights">Insights</Link>
           </div>
         </div>
