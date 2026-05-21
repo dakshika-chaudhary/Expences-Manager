@@ -124,6 +124,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState('');
   const [authenticated, setAuthenticated] = useState(false);
+  const [userId, setUserId] = useState<number | null>(null);
   const [authMessage, setAuthMessage] = useState('Ready to request an OTP from the auth service.');
   const [authBusy, setAuthBusy] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
@@ -151,6 +152,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
   const [expenseAmount, setExpenseAmount] = useState(0);
   const [expenseDescription, setExpenseDescription] = useState('');
   const [expenseMerchant, setExpenseMerchant] = useState('');
+  const [expenseNotice, setExpenseNotice] = useState('');
   const [goalName, setGoalName] = useState('');
   const [goalTarget, setGoalTarget] = useState(0);
   const [goalSaved, setGoalSaved] = useState(0);
@@ -180,6 +182,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
         const savedSessionExpiresAt = Number(parsed.sessionExpiresAt ?? 0);
         const savedAuthenticated = Boolean(parsed.authenticated) && savedSessionExpiresAt > Date.now();
         setEmail(parsed.email ?? '');
+        setUserId(parsed.userId ?? null);
         setLoginEmail(parsed.email ?? '');
         setRegisterName(parsed.registerName ?? '');
         setRegisterPhone(parsed.registerPhone ?? '');
@@ -217,6 +220,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
       JSON.stringify({
         authenticated,
         registered,
+        userId,
         sessionExpiresAt: authenticated ? sessionExpiresAt : 0,
         email,
         registerName,
@@ -231,7 +235,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
         bills: authenticated ? bills : initialBills,
       }),
     );
-  }, [authenticated, bills, categories, email, expenses, goals, ready, registered, registerCity, registerGoal, registerName, registerPhone, salary, savingsTarget, sessionExpiresAt]);
+  }, [authenticated, bills, categories, email, expenses, goals, ready, registered, registerCity, registerGoal, registerName, registerPhone, salary, savingsTarget, sessionExpiresAt, userId]);
 
   const totals = useMemo(() => {
     const categoryTotals = categories.map((category) => {
@@ -254,6 +258,8 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     const totalGoalTarget = goals.reduce((total, goal) => total + goal.target, 0);
     const totalGoalSaved = goals.reduce((total, goal) => total + goal.saved, 0);
     const projectedSavings = salary - totalSpent;
+    const expenseLimit = Math.max(salary - savingsTarget, 0);
+    const savingsShortfall = Math.max(savingsTarget - projectedSavings, 0);
 
     return {
       categoryTotals,
@@ -264,13 +270,49 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
       totalGoalSaved,
       remainingSalary: salary - totalSpent,
       projectedSavings,
+      expenseLimit,
+      savingsShortfall,
       savingsPercent: savingsTarget > 0 ? Math.max(0, Math.min((projectedSavings / savingsTarget) * 100, 100)) : 0,
       goalPercent: totalGoalTarget > 0 ? Math.min((totalGoalSaved / totalGoalTarget) * 100, 100) : 0,
       exceededCount: categoryTotals.filter((category) => category.exceeded).length,
     };
   }, [bills, categories, expenses, goals, salary, savingsTarget]);
 
-  const topAlerts = totals.categoryTotals.filter((category) => category.exceeded);
+  function buildExpenseWarnings(amount: number, categoryName: string) {
+    if (amount <= 0) {
+      return [];
+    }
+
+    const selectedCategory = totals.categoryTotals.find((category) => category.name === categoryName);
+    const projectedCategorySpend = (selectedCategory?.spent ?? 0) + amount;
+    const projectedTotalSpent = totals.totalSpent + amount;
+    const projectedSavings = salary - projectedTotalSpent;
+    const warnings: string[] = [];
+
+    if (selectedCategory && selectedCategory.limit > 0 && projectedCategorySpend > selectedCategory.limit) {
+      warnings.push(`${categoryName} will be over budget by ${formatMoney(projectedCategorySpend - selectedCategory.limit)}.`);
+    }
+    if (salary > 0 && projectedTotalSpent > salary) {
+      warnings.push(`Total expenses will be over salary by ${formatMoney(projectedTotalSpent - salary)}.`);
+    }
+    if (savingsTarget > 0 && projectedSavings < savingsTarget) {
+      warnings.push(`Projected savings will miss the target by ${formatMoney(savingsTarget - projectedSavings)}.`);
+    }
+
+    return warnings;
+  }
+
+  const expenseWarnings = useMemo(
+    () => buildExpenseWarnings(expenseAmount, expenseCategory),
+    [expenseAmount, expenseCategory, totals.categoryTotals, totals.totalSpent, salary, savingsTarget],
+  );
+  const topAlerts = [
+    ...totals.categoryTotals
+      .filter((category) => category.exceeded)
+      .map((category) => `${category.name} is over budget by ${formatMoney(category.spent - category.limit)}`),
+    ...(salary > 0 && totals.totalSpent > salary ? [`Total expenses are over salary by ${formatMoney(totals.totalSpent - salary)}`] : []),
+    ...(savingsTarget > 0 && totals.projectedSavings < savingsTarget ? [`Savings target is short by ${formatMoney(totals.savingsShortfall)}`] : []),
+  ];
   const topCategories = [...totals.categoryTotals].sort((a, b) => b.spent - a.spent).slice(0, 5);
 
   async function sendOtp(event: FormEvent) {
@@ -315,6 +357,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
       const tokens = await response.json();
       localStorage.setItem('accessToken', tokens.accessToken);
       localStorage.setItem('refreshToken', tokens.refreshToken);
+      setUserId(tokens.userId);
       setAuthenticated(true);
       setAuthMessage('Verified. JWT and refresh token are saved in browser storage.');
     } catch {
@@ -335,6 +378,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
       return;
     }
     setAuthenticated(true);
+    setUserId(null);
     setSessionExpiresAt(loginRemember ? Date.now() + sevenDaysMs : 0);
     if (loginRemember) {
       localStorage.setItem('jwtToken', `demo-jwt-${Date.now()}`);
@@ -364,6 +408,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     resetFinancialWorkspace();
     setRegistered(true);
     setAuthenticated(false);
+    setUserId(null);
     setSessionExpiresAt(0);
     localStorage.removeItem('jwtToken');
     localStorage.removeItem('jwtTokenExpiresAt');
@@ -373,6 +418,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
 
   function logoutUser() {
     setAuthenticated(false);
+    setUserId(null);
     setSessionExpiresAt(0);
     setLoginPassword('');
     resetFinancialWorkspace();
@@ -401,10 +447,33 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
     );
   }
 
-  function addExpense(event: FormEvent) {
+  async function addExpense(event: FormEvent) {
     event.preventDefault();
     if (expenseAmount <= 0) {
       return;
+    }
+    const warnings = buildExpenseWarnings(expenseAmount, expenseCategory);
+    setExpenseNotice(
+      warnings.length > 0
+        ? 'Warning: this expense is over a budget, over your expense limit, or below your savings target.'
+        : 'Expense saved inside the current limits.',
+    );
+    if (userId) {
+      try {
+        await fetch(`${apiBaseUrl}/expenses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            category: expenseCategory,
+            amount: expenseAmount,
+            description: expenseDescription || 'Daily expense',
+            expenseDate: new Date().toISOString().slice(0, 10),
+          }),
+        });
+      } catch {
+        setExpenseNotice('Expense saved in the app, but the backend email alert could not be reached.');
+      }
     }
     setExpenses((current) => [
       {
@@ -597,7 +666,7 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
           {page === 'dashboard' && (
             <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
               <div className="space-y-5">
-                <AlertStrip alerts={topAlerts.map((item) => item.name)} />
+                <AlertStrip alerts={topAlerts} />
                 <FinancialPulse salary={salary} totals={totals} bills={bills} goals={goals} />
                 <Panel title="Spending by category">
                   <CategoryGrid categories={totals.categoryTotals} />
@@ -693,6 +762,8 @@ export default function ExpenseWorkspace({ page }: { page: PageKey }) {
                   amount={expenseAmount}
                   description={expenseDescription}
                   merchant={expenseMerchant}
+                  warnings={expenseWarnings}
+                  notice={expenseNotice}
                   onCategory={setExpenseCategory}
                   onAmount={setExpenseAmount}
                   onDescription={setExpenseDescription}
@@ -897,9 +968,13 @@ function AlertStrip({ alerts }: { alerts: string[] }) {
   }
 
   return (
-    <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-4 text-rose-400">
-      <p className="font-semibold">Budget alert</p>
-      <p className="mt-1 text-sm">{alerts.join(', ')} exceeded the planned limit.</p>
+      <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-4 text-rose-400">
+      <p className="font-semibold">Budget warning</p>
+      <div className="mt-2 space-y-1 text-sm">
+        {alerts.map((alert) => (
+          <p key={alert}>{alert}</p>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1066,6 +1141,8 @@ function ExpenseForm(props: {
   amount: number;
   description: string;
   merchant: string;
+  warnings: string[];
+  notice: string;
   onCategory: (value: string) => void;
   onAmount: (value: number) => void;
   onDescription: (value: string) => void;
@@ -1085,6 +1162,21 @@ function ExpenseForm(props: {
         </select>
       </label>
       <NumberField label="Amount" value={props.amount} onChange={props.onAmount} />
+      {props.warnings.length > 0 && (
+        <div className="rounded-md border border-amber-500/45 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <p className="font-semibold">Warning before saving</p>
+          <div className="mt-2 space-y-1">
+            {props.warnings.map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+          </div>
+        </div>
+      )}
+      {props.notice && (
+        <p className={`rounded-md p-3 text-sm ${props.notice.startsWith('Warning') ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+          {props.notice}
+        </p>
+      )}
       <TextField label="Merchant" value={props.merchant} onChange={props.onMerchant} placeholder="Store, vendor, landlord" />
       <TextField label="Note" value={props.description} onChange={props.onDescription} placeholder="Lunch, rent, shopping" />
       <button className="h-11 w-full rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-500">
@@ -1173,7 +1265,7 @@ function BillForm(props: {
 function SalaryPanel(props: {
   salary: number;
   savingsTarget: number;
-  totals: { projectedSavings: number; savingsPercent: number; remainingSalary: number };
+  totals: { projectedSavings: number; savingsPercent: number; remainingSalary: number; savingsShortfall: number };
   onSalary: (value: number) => void;
   onSavings: (value: number) => void;
 }) {
@@ -1191,6 +1283,11 @@ function SalaryPanel(props: {
             <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${props.totals.savingsPercent}%` }} />
           </div>
           <p className="mt-3 text-sm text-[var(--muted)]">Remaining salary: {formatMoney(props.totals.remainingSalary)}</p>
+          {props.savingsTarget > 0 && props.totals.projectedSavings < props.savingsTarget && (
+            <p className="mt-3 rounded-md bg-rose-500/10 p-3 text-sm text-rose-400">
+              Savings warning: you are short of the target by {formatMoney(props.totals.savingsShortfall)}.
+            </p>
+          )}
         </div>
       </div>
     </Panel>

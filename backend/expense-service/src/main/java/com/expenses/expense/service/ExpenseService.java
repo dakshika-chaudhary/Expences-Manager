@@ -110,11 +110,9 @@ public class ExpenseService {
             return;
         }
 
-        BigDecimal previousCategoryTotal = categoryMonthTotal.subtract(saved.getAmount());
-        BigDecimal previousMonthlyTotal = totalMonthlyExpenses.subtract(saved.getAmount());
         List<String> alerts = new ArrayList<>();
 
-        if (crossedLimit(previousCategoryTotal, categoryMonthTotal, categoryLimit)) {
+        if (exceedsLimit(categoryMonthTotal, categoryLimit)) {
             alerts.add("Category limit exceeded for " + saved.getCategory()
                     + ". Limit: " + categoryLimit
                     + ", current spending: " + categoryMonthTotal + ".");
@@ -123,7 +121,7 @@ public class ExpenseService {
         budgetAllocationRepository
                 .findByUserIdAndMonthAndCategoryIgnoreCase(saved.getUserId(), month.toString(), saved.getCategory())
                 .map(BudgetAllocation::getLimitAmount)
-                .filter(limit -> crossedLimit(previousCategoryTotal, categoryMonthTotal, limit))
+                .filter(limit -> exceedsLimit(categoryMonthTotal, limit))
                 .ifPresent(limit -> alerts.add("Budget allocation exceeded for " + saved.getCategory()
                         + " in " + month
                         + ". Allocation: " + limit
@@ -131,7 +129,7 @@ public class ExpenseService {
 
         salaryPlanRepository.findByUserIdAndMonth(saved.getUserId(), month.toString())
                 .map(this::expenseLimit)
-                .filter(limit -> crossedLimit(previousMonthlyTotal, totalMonthlyExpenses, limit))
+                .filter(limit -> exceedsLimit(totalMonthlyExpenses, limit))
                 .ifPresent(limit -> alerts.add("Monthly expense limit exceeded for " + month
                         + ". Limit after savings target: " + limit
                         + ", current spending: " + totalMonthlyExpenses + "."));
@@ -142,17 +140,16 @@ public class ExpenseService {
 
         String message = "Hello,\n\n"
                 + "Your new expense of " + saved.getAmount() + " for " + saved.getCategory()
-                + " on " + saved.getExpenseDate() + " crossed the following limit(s):\n\n"
+                + " on " + saved.getExpenseDate() + " is over the following limit(s):\n\n"
                 + String.join("\n", alerts)
                 + "\n\nPlease review your ExpensesManager budget.";
 
         notificationClient.sendEmailAlert(email, "ExpensesManager budget alert", message);
     }
 
-    private boolean crossedLimit(BigDecimal previousTotal, BigDecimal currentTotal, BigDecimal limit) {
+    private boolean exceedsLimit(BigDecimal currentTotal, BigDecimal limit) {
         return limit != null
                 && limit.compareTo(BigDecimal.ZERO) > 0
-                && previousTotal.compareTo(limit) <= 0
                 && currentTotal.compareTo(limit) > 0;
     }
 
